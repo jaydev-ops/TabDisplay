@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package tabdisplay;
+
+option swift_prefix = "TD";
+option java_multiple_files = true;
+option java_package = "com.tabdisplay.client.proto";
+
+// Base message wrapper for all data sent over the control TCP connection
+message ControlPacket {
+    oneof payload {
+        HandshakeRequest handshake_request = 1;
+        HandshakeResponse handshake_response = 2;
+        KeepAlive keep_alive = 3;
+        InputEvent input_event = 4;
+        TelemetryFeedback telemetry = 5;
+    }
+}
+
+// Handshake Request from Client (Android) to Server (macOS)
+message HandshakeRequest {
+    string client_device_name = 1;      // e.g. "Samsung Tab S6 Lite"
+    uint32 preferred_width = 2;         // e.g. 1920
+    uint32 preferred_height = 3;        // e.g. 1200
+    uint32 target_fps = 4;              // e.g. 60
+}
+
+// Handshake Response from Server (macOS) to Client (Android)
+message HandshakeResponse {
+    bool accepted = 1;
+    string server_name = 2;             // e.g. "MacBook Air"
+    uint32 allocated_width = 3;         // Actual virtual display resolution width
+    uint32 allocated_height = 4;        // Actual virtual display resolution height
+    uint32 negotiated_fps = 5;
+    uint32 video_stream_port = 6;       // UDP Port for video transmission
+}
+
+// Keep-Alive Packet for Heartbeat monitoring
+message KeepAlive {
+    uint64 timestamp = 1;               // Monotonic server/client system timestamp
+    uint32 sequence = 2;
+}
+
+// User Input Event forwarded from Android Client to macOS Server
+message InputEvent {
+    enum ActionType {
+        ACTION_DOWN = 0;
+        ACTION_UP = 1;
+        ACTION_MOVE = 2;
+        ACTION_SCROLL = 3;
+    }
+
+    ActionType action = 1;
+    float x_percent = 2;                // Horizontal position [0.0 - 1.0]
+    float y_percent = 3;                // Vertical position [0.0 - 1.0]
+    int32 scroll_delta_x = 4;           // Scroll offsets (only for ACTION_SCROLL)
+    int32 scroll_delta_y = 5;
+    uint32 pointer_count = 6;           // For multi-touch gestures
+}
+
+// Telemetry feedback from Android Client to macOS Server for Adaptive Bitrate
+message TelemetryFeedback {
+    float packet_loss_rate = 1;         // Percentage of packets dropped [0.0 - 100.0]
+    float average_jitter_ms = 2;        // Latency jitter in milliseconds
+    float end_to_end_latency_ms = 3;    // Total elapsed frame latency measured by client
+}

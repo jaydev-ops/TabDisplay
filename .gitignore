@@ -1,0 +1,14 @@
+# macOS / Swift Package Manager
+.build/
+.DS_Store
+*.swp
+*.swo
+
+# Android
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+local.properties
+capture.raw
