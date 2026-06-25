@@ -3,16 +3,78 @@
     android:id="@+id/main_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="#0C0C0E">
 
-    <TextView
-        android:id="@+id/placeholder_text"
-        android:layout_width="wrap_content"
+    <!-- OpenGL Video Rendering Surface -->
+    <com.tabdisplay.client.renderer.GlRenderView
+        android:id="@+id/gl_render_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Semi-transparent Dark Premium Overlay for Handshake Setup -->
+    <LinearLayout
+        android:id="@+id/connection_overlay"
+        android:layout_width="340dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="TabDisplay Client\nWaiting for connection..."
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:gravity="center" />
+        android:background="@android:drawable/dialog_holo_dark_frame"
+        android:orientation="vertical"
+        android:padding="28dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="TABDISPLAY"
+            android:textColor="#00E5FF"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.1" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="4dp"
+            android:text="Real-time Secondary Display"
+            android:textColor="#8A8A93"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/ip_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:hint="macOS Server IP Address"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#55555C"
+            android:inputType="phone"
+            android:digits="0123456789."
+            android:text="192.168.1.10"
+            android:padding="12dp"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_connect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:backgroundTint="#00E5FF"
+            android:textColor="#000000"
+            android:text="Connect"
+            android:textStyle="bold"
+            android:padding="14dp"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Ready for connection"
+            android:textColor="#8A8A93"
+            android:textSize="13sp"
+            android:gravity="center" />
+    </LinearLayout>
 
 </FrameLayout>

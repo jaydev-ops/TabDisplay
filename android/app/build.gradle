@@ -38,8 +38,8 @@ dependencies {
     implementation 'com.google.android.material:material:1.8.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     
-    // Protobuf Lite for Android
-    implementation 'com.google.protobuf:protobuf-javalite:3.22.3'
+    // Protobuf Java (Full) for Android
+    implementation 'com.google.protobuf:protobuf-java:4.35.1'
     
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4'
