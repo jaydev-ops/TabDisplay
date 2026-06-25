@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
                     controlClient?.sendTelemetry(loss, jitter, latency)
                     println("Telemetry → Loss: ${String.format("%.2f", loss)}%, Jitter: ${String.format("%.2f", jitter)}ms, Latency: ${String.format("%.2f", latency)}ms")
                 }
-                mainHandler.postDelayed(this, 1000)
+                mainHandler.postDelayed(this, 500)
             }
         }
     }
@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
                 glRenderView.setOnTouchListener(forwarder)
             }
 
-            mainHandler.postDelayed(telemetryRunnable, 1000)
+            mainHandler.postDelayed(telemetryRunnable, 500)
         } else {
             statusText.text = "Handshake rejected by server."
             resetConnectionUI()

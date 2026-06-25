@@ -31,6 +31,7 @@ class HardwareDecoder {
 
             // Spawn background thread to drain output buffers
             drainThread = thread(name = "MediaCodec-Drainer") {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY)
                 val info = MediaCodec.BufferInfo()
                 while (isRunning) {
                     try {

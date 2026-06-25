@@ -115,6 +115,7 @@ class ClientNetwork(private val decoder: HardwareDecoder) {
             }
 
             receiveThread = thread(name = "ClientNetwork-Receiver") {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 val buffer = ByteArray(65535)
                 val packet = DatagramPacket(buffer, buffer.size)
 
@@ -169,6 +170,7 @@ class ClientNetwork(private val decoder: HardwareDecoder) {
 
     private fun startTcpReceiver(serverIp: String, port: Int) {
         tcpReceiveThread = thread(name = "ClientNetwork-TCPReceiver") {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
             try {
                 val sock = Socket(serverIp, port)
                 tcpSocket = sock

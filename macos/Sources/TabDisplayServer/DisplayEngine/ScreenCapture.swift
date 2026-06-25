@@ -78,6 +78,31 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
     
+    func updateResolution(width: Int, height: Int) {
+        guard let stream = stream else {
+            print("ScreenCapture: Cannot update resolution, stream is nil.")
+            return
+        }
+        
+        print("ScreenCapture: Dynamically updating SCStream configuration to \(width)x\(height)...")
+        let config = SCStreamConfiguration()
+        config.width = width
+        config.height = height
+        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange // NV12 format
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)         // Cap at 60 FPS
+        config.queueDepth = 3
+        config.showsCursor = true
+        
+        Task {
+            do {
+                try await stream.updateConfiguration(config)
+                print("ScreenCapture: SCStream configuration updated successfully.")
+            } catch {
+                print("Error updating SCStream configuration: \(error.localizedDescription)")
+            }
+        }
+    }
+    
     // MARK: - SCStreamOutput
     
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {

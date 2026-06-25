@@ -19,6 +19,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Track which menu item index is the USB toggle (set during setupMenu)
     private var usbMenuItemIndex = 0
 
+    // ABR state tracking variables
+    private var currentBitrate: Int = 5_000_000
+    private var isScaledDown: Bool = false
+    private var lastAdjustmentTime = Date()
+    private var allocatedWidth: Int = 1920
+    private var allocatedHeight: Int = 1080
+    private var negotiatedFps: Int = 60
+    private var isUsbModeActive = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
@@ -163,13 +172,65 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         controlServer.onTelemetryFeedback = { [weak self] telemetry in
+            guard let self = self else { return }
             let loss = telemetry.packetLossRate
-            print("Client Telemetry → Drop: \(String(format: "%.2f", loss))%, Jitter: \(String(format: "%.2f", telemetry.averageJitterMs))ms, Latency: \(String(format: "%.2f", telemetry.endToEndLatencyMs))ms")
+            let jitter = telemetry.averageJitterMs
+            let latency = telemetry.endToEndLatencyMs
+            print("Client Telemetry → Drop: \(String(format: "%.2f", loss))%, Jitter: \(String(format: "%.2f", jitter))ms, Latency: \(String(format: "%.2f", latency))ms")
 
-            if loss > 5.0 {
-                self?.videoEncoder.setBitrate(2_500_000)
-            } else if loss < 1.0 {
-                self?.videoEncoder.setBitrate(5_000_000)
+            let now = Date()
+            guard now.timeIntervalSince(self.lastAdjustmentTime) >= 2.0 else { return }
+
+            var changed = false
+            var newBitrate = self.currentBitrate
+            let wasScaledDown = self.isScaledDown
+            var shouldUpdateResolution = false
+
+            if loss > 2.0 {
+                // Network congestion detected, reduce bitrate by 20%
+                newBitrate = max(1_500_000, Int(Double(newBitrate) * 0.8))
+                changed = true
+                
+                // If we're already at minimum bitrate and loss is still high, or latency is very high, drop resolution
+                if newBitrate == 1_500_000 && (loss > 5.0 || latency > 100.0) && !wasScaledDown {
+                    self.isScaledDown = true
+                    shouldUpdateResolution = true
+                    print("ABR: Network severely congested. Scaling capture resolution down to 0.75x.")
+                }
+            } else if loss < 0.5 && latency < 50.0 {
+                // Clean network, increase bitrate incrementally
+                if newBitrate < 5_000_000 {
+                    newBitrate = min(5_000_000, newBitrate + 500_000)
+                    changed = true
+                }
+                
+                // If bitrate has recovered to >= 4 Mbps, scale resolution back up
+                if newBitrate >= 4_000_000 && wasScaledDown {
+                    self.isScaledDown = false
+                    shouldUpdateResolution = true
+                    print("ABR: Network recovered. Restoring native capture resolution.")
+                }
+            }
+
+            if changed || shouldUpdateResolution {
+                self.lastAdjustmentTime = now
+                
+                if newBitrate != self.currentBitrate {
+                    self.currentBitrate = newBitrate
+                    self.videoEncoder.setBitrate(newBitrate)
+                }
+
+                if shouldUpdateResolution {
+                    let scaleFactor: Double = self.isScaledDown ? 0.75 : 1.0
+                    let targetWidth = Int(Double(self.allocatedWidth) * scaleFactor)
+                    let targetHeight = Int(Double(self.allocatedHeight) * scaleFactor)
+                    
+                    print("ABR: Applying resolution update: \(targetWidth)x\(targetHeight) (scale=\(scaleFactor))")
+                    DispatchQueue.main.async {
+                        self.screenCapture.updateResolution(width: targetWidth, height: targetHeight)
+                        self.videoEncoder.startSession(width: targetWidth, height: targetHeight, fps: self.negotiatedFps)
+                    }
+                }
             }
         }
     }
@@ -193,6 +254,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startDisplayAndStreaming(width: Int, height: Int, fps: Int, usbMode: Bool) {
         print("Activating Virtual Display and capture streams (usbMode=\(usbMode))...")
+
+        // Initialize display dimensions and ABR parameters
+        self.allocatedWidth = width
+        self.allocatedHeight = height
+        self.negotiatedFps = fps
+        self.isUsbModeActive = usbMode
+        self.currentBitrate = 5_000_000
+        self.isScaledDown = false
+        self.lastAdjustmentTime = Date()
 
         guard virtualDisplay.create(width: width, height: height, fps: fps) else {
             print("Error: Could not allocate virtual secondary display.")
@@ -235,6 +305,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         updateMenuStatus(active: true, statusText: "Status: Connected & Streaming")
     }
+
 
     private func stopDisplayAndStreaming() {
         print("Deactivating Virtual Display and streaming pipelines...")
