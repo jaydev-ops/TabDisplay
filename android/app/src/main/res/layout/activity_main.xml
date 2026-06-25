@@ -54,8 +54,45 @@
             android:padding="12dp"
             android:textSize="16sp" />
 
+        <LinearLayout
+            android:id="@+id/usb_mode_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="USB Mode"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/usb_mode_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/usb_mode_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Connect via USB cable · auto-fills 127.0.0.1"
+            android:textColor="#636368"
+            android:textSize="11sp"
+            android:gravity="center"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/btn_connect"
+
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"

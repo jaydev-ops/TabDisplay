@@ -2,33 +2,44 @@ import Foundation
 import Network
 
 class ServerNetwork {
-    private var listener: NWListener?
-    private var activeConnection: NWConnection?
+
+    // MARK: - UDP Wi-Fi mode
+    private var udpListener: NWListener?
+    private var udpConnection: NWConnection?
     private let sendQueue = DispatchQueue(label: "com.tabdisplay.udpsend", qos: .userInteractive)
-    
-    // Custom retransmit cache storing recently sent fragments
-    private let retransmitBuffer = RetransmitBuffer()
-    
+
+    // MARK: - TCP USB mode
+    private var tcpListener: NWListener?
+    private var tcpConnection: NWConnection?
+    private let tcpSendQueue = DispatchQueue(label: "com.tabdisplay.tcpsend", qos: .userInteractive)
+
+    // MARK: - Shared state
+    private(set) var isUsbMode = false
+    private let retransmitBuffer = RetransmitBuffer() // Only used in UDP mode
     private var frameIndex: UInt32 = 0
-    private let mtuSize = 1200 // Max H.264 slice size per UDP payload to fit in standard MTU safely
-    
+    private let mtuSize = 1200 // Max H.264 slice size per UDP payload
+
     init() {
         print("ServerNetwork initialized")
     }
-    
+
     deinit {
         stopStreaming()
     }
-    
+
+    // MARK: - Start / Stop
+
+    /// Start in UDP mode (Wi-Fi) — default.
     func startStreaming(port: UInt32) {
         stopStreaming()
-        
+        isUsbMode = false
+
         do {
             let parameters = NWParameters.udp
             let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
             let listener = try NWListener(using: parameters, on: listenerPort)
-            self.listener = listener
-            
+            self.udpListener = listener
+
             listener.stateUpdateHandler = { (state: NWListener.State) in
                 switch state {
                 case .ready:
@@ -39,37 +50,100 @@ class ServerNetwork {
                     break
                 }
             }
-            
+
             listener.newConnectionHandler = { [weak self] connection in
                 print("ServerNetwork: incoming UDP connection detected from \(connection.endpoint)")
                 self?.handleIncomingUDPPing(connection)
             }
-            
+
             listener.start(queue: DispatchQueue.global(qos: .userInteractive))
         } catch {
             print("Error: Failed to create UDP listener: \(error)")
         }
     }
-    
+
+    /// Start in TCP mode (USB ADB tunnel). Android connects to 127.0.0.1:port.
+    func startTCPStreaming(port: UInt32) {
+        stopStreaming()
+        isUsbMode = true
+
+        do {
+            let parameters = NWParameters.tcp
+            let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
+            let listener = try NWListener(using: parameters, on: listenerPort)
+            self.tcpListener = listener
+
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    print("ServerNetwork TCP Video Listener active on port \(port) (USB mode)")
+                case .failed(let error):
+                    print("ServerNetwork TCP Video Listener failed: \(error)")
+                default:
+                    break
+                }
+            }
+
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self = self else { return }
+                if self.tcpConnection != nil {
+                    print("ServerNetwork: Refusing duplicate TCP video client, already connected.")
+                    connection.cancel()
+                    return
+                }
+                print("ServerNetwork: TCP video client connected via USB: \(connection.endpoint)")
+                self.tcpConnection = connection
+                connection.stateUpdateHandler = { [weak self] state in
+                    switch state {
+                    case .cancelled, .failed:
+                        print("ServerNetwork: TCP video connection closed.")
+                        self?.tcpConnection = nil
+                    default:
+                        break
+                    }
+                }
+                connection.start(queue: DispatchQueue.global(qos: .userInteractive))
+            }
+
+            listener.start(queue: DispatchQueue.global(qos: .userInteractive))
+        } catch {
+            print("Error: Failed to create TCP video listener: \(error)")
+        }
+    }
+
     func stopStreaming() {
-        if let conn = activeConnection {
+        // UDP
+        if let conn = udpConnection {
             print("Closing active UDP streaming connection...")
             conn.cancel()
-            activeConnection = nil
+            udpConnection = nil
         }
-        if let list = listener {
+        if let list = udpListener {
             print("Stopping UDP listener...")
             list.cancel()
-            listener = nil
+            udpListener = nil
+        }
+        // TCP
+        if let conn = tcpConnection {
+            print("Closing TCP video connection (USB mode)...")
+            conn.cancel()
+            tcpConnection = nil
+        }
+        if let list = tcpListener {
+            print("Stopping TCP video listener (USB mode)...")
+            list.cancel()
+            tcpListener = nil
         }
         retransmitBuffer.clear()
         frameIndex = 0
+        isUsbMode = false
     }
-    
+
+    // MARK: - UDP Helpers
+
     private func handleIncomingUDPPing(_ connection: NWConnection) {
         connection.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
             guard let self = self else { return }
-            print("ServerNetwork: UDP connection to \(connection.endpoint) changed state to \(state)")
             switch state {
             case .ready:
                 self.receivePackets(connection)
@@ -84,108 +158,126 @@ class ServerNetwork {
         }
         connection.start(queue: DispatchQueue.global(qos: .userInteractive))
     }
-    
+
     private func closeUDPConnection(_ connection: NWConnection) {
         connection.cancel()
-        if activeConnection === connection {
+        if udpConnection === connection {
             print("UDP stream connection closed.")
-            activeConnection = nil
+            udpConnection = nil
         }
     }
-    
+
     private func receivePackets(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65535) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
-            
+
             if let error = error {
                 print("UDP receive error: \(error)")
                 self.closeUDPConnection(connection)
                 return
             }
-            
+
             if let data = data, !data.isEmpty {
                 self.parseIncomingPacket(data, connection: connection)
             }
-            
-            // Always keep listening for the next UDP datagram
+
             self.receivePackets(connection)
         }
     }
-    
+
     private func parseIncomingPacket(_ data: Data, connection: NWConnection) {
         let magic = data[0]
-        
+
         // 1. Endpoint Discovery Ping
         if magic == 0xFF {
-            if activeConnection == nil {
+            if udpConnection == nil {
                 print("Received client UDP hole-punch ping. UDP stream target set to: \(connection.endpoint)")
-                activeConnection = connection
+                udpConnection = connection
             }
             return
         }
-        
-        // Ensure packet is from the active client
-        guard connection === activeConnection else { return }
-        
+
+        guard connection === udpConnection else { return }
+
         // 2. NACK Retransmit Request: 0xFD (1) + frameIndex (4) + fragmentIndex (2)
         if magic == 0xFD && data.count >= 7 {
             let frameIdx = data.subdata(in: 1..<5).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
             let fragmentIdx = data.subdata(in: 5..<7).withUnsafeBytes { $0.load(as: UInt16.self).bigEndian }
-            
+
             if let retransmitPacket = retransmitBuffer.get(frameIndex: frameIdx, fragmentIndex: fragmentIdx) {
                 sendQueue.async { [weak self] in
-                    self?.sendPacket(retransmitPacket)
+                    self?.sendUDPPacket(retransmitPacket)
                 }
             }
         }
     }
-    
-    /// Fragment and stream an H.264 video frame over UDP
+
+    // MARK: - Frame Sending
+
+    /// Fragment and stream an H.264 video frame over UDP (Wi-Fi) or TCP (USB).
     func sendFrame(data: Data, isKeyframe: Bool) {
-        guard activeConnection != nil else { return }
-        
+        if isUsbMode {
+            sendFrameViaTCP(data: data)
+        } else {
+            sendFrameViaUDP(data: data, isKeyframe: isKeyframe)
+        }
+    }
+
+    private func sendFrameViaTCP(data: Data) {
+        guard let connection = tcpConnection else { return }
+        // Length-prefix framing: 4-byte big-endian length + raw H.264 payload
+        var length = UInt32(data.count).bigEndian
+        var frameData = Data(bytes: &length, count: 4)
+        frameData.append(data)
+        let toSend = frameData
+        tcpSendQueue.async {
+            connection.send(content: toSend, completion: .contentProcessed({ error in
+                if let error = error {
+                    print("Error: TCP video send failed: \(error)")
+                }
+            }))
+        }
+    }
+
+    private func sendFrameViaUDP(data: Data, isKeyframe: Bool) {
+        guard udpConnection != nil else { return }
+
         frameIndex += 1
         let currentFrameIndex = frameIndex
         let totalLength = data.count
         let frameType: UInt8 = isKeyframe ? 1 : 0
-        
-        // Monotonic presentation time mapping
+
         let timestamp = UInt64(Date().timeIntervalSince1970 * 1000)
-        
         let totalFragments = UInt16(ceil(Double(totalLength) / Double(mtuSize)))
-        
+
         for i in 0..<totalFragments {
             let fragmentIndex = UInt16(i)
             let offset = Int(fragmentIndex) * mtuSize
             let size = min(mtuSize, totalLength - offset)
-            
+
             let slicePayload = data.subdata(in: offset..<(offset + size))
-            
-            // Build custom 20-byte packet header
+
             var packet = Data()
             packet.appendBigEndian(currentFrameIndex)
             packet.appendBigEndian(fragmentIndex)
             packet.appendBigEndian(totalFragments)
             packet.appendBigEndian(UInt16(size))
             packet.append(frameType)
-            packet.append(0) // reserved
+            packet.append(0)
             packet.appendBigEndian(timestamp)
-            
             packet.append(slicePayload)
-            
-            // Cache fragment for ARQ Selective Repeat retransmissions
+
             retransmitBuffer.cache(frameIndex: currentFrameIndex, fragmentIndex: fragmentIndex, packet: packet)
-            
+
             let packetToSend = packet
-            // Dispatch asynchronously to prevent encoder thread block
             sendQueue.async { [weak self] in
-                self?.sendPacket(packetToSend)
+                self?.sendUDPPacket(packetToSend)
             }
         }
     }
-    
-    private func sendPacket(_ data: Data) {
-        guard let connection = activeConnection else { return }
+
+    private func sendUDPPacket(_ data: Data) {
+        guard let connection = udpConnection else { return }
         connection.send(content: data, completion: .contentProcessed({ error in
             if let error = error {
                 print("Error: UDP send failed: \(error)")
@@ -199,18 +291,17 @@ class ServerNetwork {
 fileprivate class RetransmitBuffer {
     private var buffer: [UInt32: [UInt16: Data]] = [:]
     private var frameHistory: [UInt32] = []
-    private let maxCachedFrames = 5 // Sliding window cache limit
+    private let maxCachedFrames = 5
     private let lock = NSLock()
-    
+
     func cache(frameIndex: UInt32, fragmentIndex: UInt16, packet: Data) {
         lock.lock()
         defer { lock.unlock() }
-        
+
         if buffer[frameIndex] == nil {
             buffer[frameIndex] = [:]
             frameHistory.append(frameIndex)
-            
-            // Evict oldest frame
+
             if frameHistory.count > maxCachedFrames {
                 let evictedFrame = frameHistory.removeFirst()
                 buffer.removeValue(forKey: evictedFrame)
@@ -218,13 +309,13 @@ fileprivate class RetransmitBuffer {
         }
         buffer[frameIndex]?[fragmentIndex] = packet
     }
-    
+
     func get(frameIndex: UInt32, fragmentIndex: UInt16) -> Data? {
         lock.lock()
         defer { lock.unlock() }
         return buffer[frameIndex]?[fragmentIndex]
     }
-    
+
     func clear() {
         lock.lock()
         defer { lock.unlock() }
@@ -240,12 +331,12 @@ fileprivate extension Data {
         var val = value.bigEndian
         Swift.withUnsafeBytes(of: &val) { append(contentsOf: $0) }
     }
-    
+
     mutating func appendBigEndian(_ value: UInt16) {
         var val = value.bigEndian
         Swift.withUnsafeBytes(of: &val) { append(contentsOf: $0) }
     }
-    
+
     mutating func appendBigEndian(_ value: UInt64) {
         var val = value.bigEndian
         Swift.withUnsafeBytes(of: &val) { append(contentsOf: $0) }

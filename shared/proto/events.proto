@@ -32,7 +32,14 @@ message HandshakeResponse {
     uint32 allocated_width = 3;         // Actual virtual display resolution width
     uint32 allocated_height = 4;        // Actual virtual display resolution height
     uint32 negotiated_fps = 5;
-    uint32 video_stream_port = 6;       // UDP Port for video transmission
+    uint32 video_stream_port = 6;       // UDP/TCP Port for video transmission
+    VideoTransport video_transport = 7; // Transport protocol for video stream
+}
+
+// Video transport protocol negotiated at handshake time
+enum VideoTransport {
+    UDP = 0;    // Wi-Fi mode: standard UDP datagrams
+    TCP = 1;    // USB mode: reliable TCP stream tunnelled over adb forward
 }
 
 // Keep-Alive Packet for Heartbeat monitoring
