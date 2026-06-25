@@ -46,28 +46,28 @@ echo ""
 CONTROL_PORT=5001   # TCP control channel (handshake + telemetry + input events)
 VIDEO_PORT=6002     # TCP/UDP video stream channel
 
-# ── Forward ports ─────────────────────────────────────────────────────────────
-echo "Configuring ADB port forwarding..."
+# ── Reverse ports ─────────────────────────────────────────────────────────────
+echo "Configuring ADB port reverses..."
 
 echo "→ Control channel: tcp:$CONTROL_PORT ↔ tcp:$CONTROL_PORT"
-if ! adb forward tcp:$CONTROL_PORT tcp:$CONTROL_PORT; then
-    echo "❌ Failed to forward control channel (port $CONTROL_PORT)."
+if ! adb reverse tcp:$CONTROL_PORT tcp:$CONTROL_PORT; then
+    echo "❌ Failed to reverse control channel (port $CONTROL_PORT)."
     exit 3
 fi
 
 echo "→ Video  channel:  tcp:$VIDEO_PORT ↔ tcp:$VIDEO_PORT"
-if ! adb forward tcp:$VIDEO_PORT tcp:$VIDEO_PORT; then
-    echo "❌ Failed to forward video channel (port $VIDEO_PORT)."
+if ! adb reverse tcp:$VIDEO_PORT tcp:$VIDEO_PORT; then
+    echo "❌ Failed to reverse video channel (port $VIDEO_PORT)."
     exit 4
 fi
 
 echo ""
-echo "✓ Port forwarding configured."
+echo "✓ Port reverses configured."
 echo ""
 
-# ── Verification: list active forwards ────────────────────────────────────────
-echo "Active ADB port forwards:"
-adb forward --list | sed 's/^/   /'
+# ── Verification: list active reverses ────────────────────────────────────────
+echo "Active ADB port reverses:"
+adb reverse --list | sed 's/^/   /'
 echo ""
 
 # ── Instructions ──────────────────────────────────────────────────────────────
@@ -81,4 +81,5 @@ echo "  2. Enable 'USB Mode' in the macOS menu bar toggle."
 echo "  3. Open TabDisplay on the tablet → enable 'USB Mode' switch."
 echo "  4. Tap Connect — the app will use 127.0.0.1 automatically."
 echo ""
-echo "To clear forwards later, run:  adb forward --remove-all"
+echo "To clear reverses later, run:  adb reverse --remove-all"
+

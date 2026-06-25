@@ -121,32 +121,33 @@ class UsbBridge {
         }
     }
 
-    /// Sets up `adb forward` for both control and video ports.
+    /// Sets up `adb reverse` for both control and video ports.
     @discardableResult
     private func setupForwards() -> Bool {
         guard let adb = adbPath() else { return false }
-        let controlOk = shell(adb, args: ["forward", "tcp:\(controlPort)", "tcp:\(controlPort)"]) != nil
-        let videoOk   = shell(adb, args: ["forward", "tcp:\(videoPort)",   "tcp:\(videoPort)"])   != nil
+        let controlOk = shell(adb, args: ["reverse", "tcp:\(controlPort)", "tcp:\(controlPort)"]) != nil
+        let videoOk   = shell(adb, args: ["reverse", "tcp:\(videoPort)",   "tcp:\(videoPort)"])   != nil
 
         if controlOk && videoOk {
-            print("UsbBridge: ✓ Forwarded tcp:\(controlPort) and tcp:\(videoPort) over USB")
-            // Log active forwards
-            if let list = shell(adb, args: ["forward", "--list"]) {
-                print("UsbBridge: Active forwards:\n\(list)")
+            print("UsbBridge: ✓ Reversed tcp:\(controlPort) and tcp:\(videoPort) over USB")
+            // Log active reverses
+            if let list = shell(adb, args: ["reverse", "--list"]) {
+                print("UsbBridge: Active reverses:\n\(list)")
             }
             return true
         } else {
-            print("UsbBridge: ✗ Failed to set up port forwards.")
+            print("UsbBridge: ✗ Failed to set up port reverses.")
             return false
         }
     }
 
-    /// Removes all ADB port forwards.
+    /// Removes all ADB port reverses.
     private func removeForwards() {
         guard let adb = adbPath() else { return }
-        shell(adb, args: ["forward", "--remove-all"])
-        print("UsbBridge: All ADB port forwards removed.")
+        shell(adb, args: ["reverse", "--remove-all"])
+        print("UsbBridge: All ADB port reverses removed.")
     }
+
 
     // MARK: - Process Helpers
 
