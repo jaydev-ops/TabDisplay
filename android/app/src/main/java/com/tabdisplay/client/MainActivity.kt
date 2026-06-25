@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.tabdisplay.client.decoder.HardwareDecoder
+import com.tabdisplay.client.input.TouchForwarder
 import com.tabdisplay.client.network.ClientNetwork
 import com.tabdisplay.client.network.ControlClient
 import com.tabdisplay.client.proto.HandshakeResponse
@@ -28,6 +29,7 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
     private var controlClient: ControlClient? = null
     private var clientNetwork: ClientNetwork? = null
     private var hardwareDecoder: HardwareDecoder? = null
+    private var touchForwarder: TouchForwarder? = null
 
     private var serverIpAddress: String = ""
     private var isConnected = false
@@ -116,6 +118,14 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
             // Bind rendering surface and initiate decoder and UDP streaming stack
             glRenderView.setSurfaceListener(this)
 
+            // Setup touch event forwarding listener
+            val client = controlClient
+            if (client != null) {
+                val forwarder = TouchForwarder(client)
+                touchForwarder = forwarder
+                glRenderView.setOnTouchListener(forwarder)
+            }
+
             // Start telemetry scheduler
             mainHandler.postDelayed(telemetryRunnable, 1000)
         } else {
@@ -156,6 +166,8 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
         mainHandler.removeCallbacks(telemetryRunnable)
         clientNetwork?.stopListening()
         hardwareDecoder?.release()
+        glRenderView.setOnTouchListener(null)
+        touchForwarder = null
     }
 
     override fun onResume() {

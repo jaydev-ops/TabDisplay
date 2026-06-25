@@ -9,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let videoEncoder = VideoEncoder()
     private let controlServer = ControlServer()
     private let serverNetwork = ServerNetwork()
+    private let eventInjector = EventInjector()
     private var fileWriter: FileStreamWriter?
     
     var autoStart = false
@@ -92,9 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         
-        controlServer.onInputEvent = { inputEvent in
-            // Forward mouse/touch events to the OS injector (Phase 6 implementation target)
-            // print("InputEvent -> Action: \(inputEvent.action), Coordinates: (\(inputEvent.xPercent), \(inputEvent.yPercent))")
+        controlServer.onInputEvent = { [weak self] inputEvent in
+            guard let self = self else { return }
+            self.eventInjector.injectInput(inputEvent, displayID: self.virtualDisplay.displayID)
         }
         
         controlServer.onTelemetryFeedback = { [weak self] telemetry in
