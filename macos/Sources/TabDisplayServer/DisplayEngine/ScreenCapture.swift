@@ -8,6 +8,9 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastFpsTime: CFTimeInterval = 0
     private let captureQueue = DispatchQueue(label: "com.tabdisplay.capture", qos: .userInteractive)
     
+    // Callback invoked when a pixel buffer is captured from the stream
+    var onPixelBufferCaptured: ((CVPixelBuffer, CMTime) -> Void)?
+    
     override init() {
         super.init()
         print("ScreenCapture engine initialized")
@@ -97,7 +100,8 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             print("Captured Frame: #\(frameCount) | Render Bounds: \(frameWidth)x\(frameHeight) | PTS: \(String(format: "%.3f", pts.seconds))s | FPS: \(String(format: "%.2f", realTimeFps))")
         }
         
-        // TODO: Pass CVPixelBuffer to VideoEncoder pipeline
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        onPixelBufferCaptured?(pixelBuffer, pts)
     }
     
     // MARK: - SCStreamDelegate

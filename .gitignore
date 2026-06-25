@@ -12,3 +12,6 @@ app/build/
 .idea/
 local.properties
 capture.raw
+capture.h264
+*.h264
+

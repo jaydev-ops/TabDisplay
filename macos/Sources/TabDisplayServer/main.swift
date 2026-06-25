@@ -11,4 +11,9 @@ if CommandLine.arguments.contains("--auto-start") {
     delegate.autoStart = true
 }
 
+if let recordIndex = CommandLine.arguments.firstIndex(of: "--record-to-file"),
+   recordIndex + 1 < CommandLine.arguments.count {
+    delegate.recordFilePath = CommandLine.arguments[recordIndex + 1]
+}
+
 app.run()
