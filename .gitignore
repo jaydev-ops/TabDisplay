@@ -15,3 +15,7 @@ capture.raw
 capture.h264
 *.h264
 
+# Release build outputs
+release/
+
+
