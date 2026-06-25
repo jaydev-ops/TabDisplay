@@ -33,6 +33,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenu()
         setupControlServerCallbacks()
         setupUsbBridgeCallbacks()
+        // Auto-start USB Bridge polling on launch for seamless plug-and-play detection
+        usbBridge.start()
         print("TabDisplay macOS Server initialized and status menu ready.")
         // Start TCP control listener immediately
         controlServer.startListener(port: 5001)
@@ -68,9 +70,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator()) // [4]
 
-        // [5] USB Mode toggle
-        let usbItem = NSMenuItem(title: "USB Mode: Off", action: #selector(toggleUsbMode), keyEquivalent: "u")
+        // [5] USB Mode toggle (default to enabled/scanning)
+        let usbItem = NSMenuItem(title: "USB Mode: Scanning…", action: #selector(toggleUsbMode), keyEquivalent: "u")
         usbItem.target = self
+        usbItem.state = .on
         menu.addItem(usbItem)
         usbMenuItemIndex = 5
 
@@ -84,6 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
         updateMenuStatus(active: true, statusText: "Status: Waiting for client...")
     }
+
 
     // MARK: - USB Mode
 
