@@ -37,36 +37,36 @@ class ServerNetwork {
 
         let semaphore = DispatchSemaphore(value: 0)
 
-        do {
-            let parameters = NWParameters.udp
-            parameters.serviceClass = .interactiveVideo
-            let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
-            let listener = try NWListener(using: parameters, on: listenerPort)
-            self.udpListener = listener
-
-            listener.stateUpdateHandler = { (state: NWListener.State) in
-                switch state {
-                case .ready:
-                    print("ServerNetwork UDP Listener active on port \(port)")
-                    semaphore.signal()
-                case .failed(let error):
-                    print("ServerNetwork UDP Listener failed with error: \(error)")
-                    semaphore.signal()
-                default:
-                    break
-                }
-            }
-
-            listener.newConnectionHandler = { [weak self] connection in
-                print("ServerNetwork: incoming UDP connection detected from \(connection.endpoint)")
-                self?.handleIncomingUDPPing(connection)
-            }
-
-            listener.start(queue: DispatchQueue.global(qos: .userInteractive))
-            _ = semaphore.wait(timeout: .now() + 1.0)
-        } catch {
-            print("Error: Failed to create UDP listener: \(error)")
+        let parameters = NWParameters.udp
+        parameters.serviceClass = .interactiveVideo
+        let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
+        
+        guard let listener = try? NWListener(using: parameters, on: listenerPort) else {
+            print("Error: Failed to create UDP listener")
+            return
         }
+        self.udpListener = listener
+
+        listener.stateUpdateHandler = { (state: NWListener.State) in
+            switch state {
+            case .ready:
+                print("ServerNetwork UDP Listener active on port \(port)")
+                semaphore.signal()
+            case .failed(let error):
+                print("ServerNetwork UDP Listener failed with error: \(error)")
+                semaphore.signal()
+            default:
+                break
+            }
+        }
+
+        listener.newConnectionHandler = { [weak self] connection in
+            print("ServerNetwork: incoming UDP connection detected from \(connection.endpoint)")
+            self?.handleIncomingUDPPing(connection)
+        }
+
+        listener.start(queue: DispatchQueue.global(qos: .userInteractive))
+        _ = semaphore.wait(timeout: .now() + 1.0)
     }
 
     /// Start in TCP mode (USB ADB tunnel). Android connects to 127.0.0.1:port.
@@ -76,55 +76,55 @@ class ServerNetwork {
 
         let semaphore = DispatchSemaphore(value: 0)
 
-        do {
-            let parameters = NWParameters.tcp
-            parameters.serviceClass = .interactiveVideo
-            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-                tcpOptions.noDelay = true
-            }
-            let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
-            let listener = try NWListener(using: parameters, on: listenerPort)
-            self.tcpListener = listener
+        let parameters = NWParameters.tcp
+        parameters.serviceClass = .interactiveVideo
+        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true
+        }
+        let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
+        
+        guard let listener = try? NWListener(using: parameters, on: listenerPort) else {
+            print("Error: Failed to create TCP video listener")
+            return
+        }
+        self.tcpListener = listener
 
-            listener.stateUpdateHandler = { state in
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                print("ServerNetwork TCP Video Listener active on port \(port) (USB mode)")
+                semaphore.signal()
+            case .failed(let error):
+                print("ServerNetwork TCP Video Listener failed: \(error)")
+                semaphore.signal()
+            default:
+                break
+            }
+        }
+
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self = self else { return }
+            if self.tcpConnection != nil {
+                print("ServerNetwork: Refusing duplicate TCP video client, already connected.")
+                connection.cancel()
+                return
+            }
+            print("ServerNetwork: TCP video client connected via USB: \(connection.endpoint)")
+            self.tcpConnection = connection
+            connection.stateUpdateHandler = { [weak self] state in
                 switch state {
-                case .ready:
-                    print("ServerNetwork TCP Video Listener active on port \(port) (USB mode)")
-                    semaphore.signal()
-                case .failed(let error):
-                    print("ServerNetwork TCP Video Listener failed: \(error)")
-                    semaphore.signal()
+                case .cancelled, .failed:
+                    print("ServerNetwork: TCP video connection closed.")
+                    self?.tcpConnection = nil
                 default:
                     break
                 }
             }
-
-            listener.newConnectionHandler = { [weak self] connection in
-                guard let self = self else { return }
-                if self.tcpConnection != nil {
-                    print("ServerNetwork: Refusing duplicate TCP video client, already connected.")
-                    connection.cancel()
-                    return
-                }
-                print("ServerNetwork: TCP video client connected via USB: \(connection.endpoint)")
-                self.tcpConnection = connection
-                connection.stateUpdateHandler = { [weak self] state in
-                    switch state {
-                    case .cancelled, .failed:
-                        print("ServerNetwork: TCP video connection closed.")
-                        self?.tcpConnection = nil
-                    default:
-                        break
-                    }
-                }
-                connection.start(queue: DispatchQueue.global(qos: .userInteractive))
-            }
-
-            listener.start(queue: DispatchQueue.global(qos: .userInteractive))
-            _ = semaphore.wait(timeout: .now() + 1.0)
-        } catch {
-            print("Error: Failed to create TCP video listener: \(error)")
+            connection.start(queue: DispatchQueue.global(qos: .userInteractive))
         }
+
+        listener.start(queue: DispatchQueue.global(qos: .userInteractive))
+        _ = semaphore.wait(timeout: .now() + 1.0)
     }
 
     func stopStreaming() {
