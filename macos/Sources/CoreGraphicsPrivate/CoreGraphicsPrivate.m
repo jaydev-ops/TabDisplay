@@ -1,4 +1,4 @@
-#import "CoreGraphicsPrivate.h"
+#import "include/CoreGraphicsPrivate.h"
 
 @interface CGVirtualDisplayDescriptor : NSObject
 @property(nonatomic) unsigned int vendorID;
