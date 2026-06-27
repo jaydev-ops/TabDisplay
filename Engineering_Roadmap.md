@@ -1,4 +1,4 @@
-# TabDisplay — Engineering Roadmap
+# TabDisplay — Engineering
 
 ---
 
@@ -501,17 +501,17 @@ To ensure a structured, testable, and robust development lifecycle, features mus
 1. **Phase 0 (Research)**: Create standalone command-line scripts to verify `CGVirtualDisplay` creation and ensure frames can be extracted locally.
 
    #### Research Matrix
-   
-   | Research Question | Answer | Details / Validation |
-   | :--- | :--- | :--- |
-   | **Can ScreenCaptureKit capture CGVirtualDisplay?** | **YES** | ScreenCaptureKit detects virtual displays natively, listing their `CGDirectDisplayID` inside `SCShareableContent` for targeting. |
-   | **Can CGVirtualDisplay survive reboot?** | **NO** | The display is dynamic and bound to the lifecycle of the host process's active `CGVirtualDisplay` object. It is cleanly deallocated on process exit. |
-   | **Can apps render onto it?** | **YES** | macOS recognizes it as an independent display surface, permitting full application rendering and window positioning. |
-   | **Can Mission Control see it?** | **YES** | It integrates natively with the macOS display manager, appearing in Mission Control and Display Arrangements in System Settings. |
-   | **Can windows be moved?** | **YES** | Standard window movement and layout APIs work natively on the virtual display coordinates. |
-   | **Does it require SIP disabled?** | **NO** | Verified on Apple Silicon (M2) macOS. Works in standard user space without changing system integrity configurations. |
-   | **Does it survive Sonoma updates?** | **YES** | Tested and verified on macOS 14 (Sonoma) and later versions (macOS 15/16). |
-   | **Can it ship?** | **YES (Direct Distribution)** | Cannot be published to the Mac App Store due to undocumented CoreGraphics API usage, but fully deployable via signed Developer ID DMG packages. |
+
+   | Research Question                                  | Answer                        | Details / Validation                                                                                                                                 |
+   | :------------------------------------------------- | :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | **Can ScreenCaptureKit capture CGVirtualDisplay?** | **YES**                       | ScreenCaptureKit detects virtual displays natively, listing their `CGDirectDisplayID` inside `SCShareableContent` for targeting.                     |
+   | **Can CGVirtualDisplay survive reboot?**           | **NO**                        | The display is dynamic and bound to the lifecycle of the host process's active `CGVirtualDisplay` object. It is cleanly deallocated on process exit. |
+   | **Can apps render onto it?**                       | **YES**                       | macOS recognizes it as an independent display surface, permitting full application rendering and window positioning.                                 |
+   | **Can Mission Control see it?**                    | **YES**                       | It integrates natively with the macOS display manager, appearing in Mission Control and Display Arrangements in System Settings.                     |
+   | **Can windows be moved?**                          | **YES**                       | Standard window movement and layout APIs work natively on the virtual display coordinates.                                                           |
+   | **Does it require SIP disabled?**                  | **NO**                        | Verified on Apple Silicon (M2) macOS. Works in standard user space without changing system integrity configurations.                                 |
+   | **Does it survive Sonoma updates?**                | **YES**                       | Tested and verified on macOS 14 (Sonoma) and later versions (macOS 15/16).                                                                           |
+   | **Can it ship?**                                   | **YES (Direct Distribution)** | Cannot be published to the Mac App Store due to undocumented CoreGraphics API usage, but fully deployable via signed Developer ID DMG packages.      |
 
 2. **Phase 1 (Setup)**: Initialize Xcode and Android Studio projects. Compile the shared Protobuf contract into Swift and Kotlin classes.
 3. **Phase 2 (Capture)**: Implement the screen capture class on macOS, feeding frames to a dummy collector to verify 60fps throughput.

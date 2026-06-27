@@ -13,6 +13,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let usbBridge      = UsbBridge()
     private var fileWriter: FileStreamWriter?
 
+    // ── STEP 2: compositor probe window ──────────────────────────────────────
+    // A fullscreen borderless NSWindow placed on the virtual display.
+    // Purpose: give WindowServer composited content so SCStream receives
+    // continuous damage events instead of going idle immediately.
+    // Background is a distinctive dark-gray so first_frame.png confirms
+    // we are capturing the virtual display, not the primary display.
+    private var displayProbeWindow: NSWindow?
+    private var permissionTimer: Timer?
+    // ── END STEP 2 ───────────────────────────────────────────────────────────
+
     var autoStart = false
     var recordFilePath: String?
 
@@ -35,9 +45,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupUsbBridgeCallbacks()
         // Auto-start USB Bridge polling on launch for seamless plug-and-play detection
         usbBridge.start()
+        
         print("TabDisplay macOS Server initialized and status menu ready.")
-        // Start TCP control listener immediately
-        controlServer.startListener(port: 5001)
+        
+        // Priority 1 & 2: Check screen capture permissions on launch
+        let hasAccess = CGPreflightScreenCaptureAccess()
+        print("Screen Recording Permission Status on Launch: \(hasAccess ? "GRANTED" : "NOT GRANTED")")
+        
+        if hasAccess {
+            // Start TCP control listener immediately if permission is already granted
+            controlServer.startListener(port: 5001)
+            updateMenuStatus(active: true, statusText: "Status: Waiting for client...")
+        } else {
+            print("[Permission] Requesting screen recording permission from user...")
+            // Trigger system prompt (non-blocking)
+            _ = CGRequestScreenCaptureAccess()
+            updateMenuStatus(active: false, statusText: "Status: Permission Required")
+            
+            // Start polling timer to detect when permission is granted
+            permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                guard let self = self else { return }
+                print("[Permission] Checking screen recording access status...")
+                if CGPreflightScreenCaptureAccess() {
+                    print("[Permission] Access granted! Initializing control listener.")
+                    timer.invalidate()
+                    self.permissionTimer = nil
+                    self.controlServer.startListener(port: 5001)
+                    self.updateMenuStatus(active: true, statusText: "Status: Waiting for client...")
+                }
+            }
+        }
     }
 
     // MARK: - Menu Setup
@@ -131,35 +168,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Control Server Callbacks
 
     private func setupControlServerCallbacks() {
-        controlServer.onHandshakeRequest = { [weak self] request in
-            guard let self = self else { return TDHandshakeResponse() }
-            print("Received handshake request from client device: '\(request.clientDeviceName)'")
-
-            var response = TDHandshakeResponse()
-            response.accepted = true
-            response.serverName = Host.current().localizedName ?? "macOS Host Server"
-            response.allocatedWidth = 1920
-            response.allocatedHeight = 1080
-            response.negotiatedFps = 60
-            response.videoStreamPort = 6002
-
-            // Negotiate transport: TCP when a USB device is connected, UDP otherwise
-            if self.usbBridge.isRunning && self.usbBridge.isDeviceConnected {
-                response.videoTransport = .tcp
-                print("Handshake: Negotiated TCP video transport (USB mode).")
-            } else {
-                response.videoTransport = .udp
-                print("Handshake: Negotiated UDP video transport (Wi-Fi mode).")
+        controlServer.onHandshakeRequest = { [weak self] request, completion in
+            guard let self = self else {
+                completion(TDHandshakeResponse())
+                return
             }
+            print("Received handshake request from client device: '\(request.clientDeviceName)' (\(request.preferredWidth)x\(request.preferredHeight))")
 
-            DispatchQueue.main.async {
-                self.startDisplayAndStreaming(
-                    width: 1920, height: 1080, fps: 60,
+            // Handle the handshake asynchronously on the main thread
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else {
+                    completion(TDHandshakeResponse())
+                    return
+                }
+
+                // Clean up any active session before initiating a new one
+                if self.virtualDisplay.displayID != nil {
+                    print("Handshake: Cleaning up active previous session before starting new one.")
+                    self.stopDisplayAndStreaming()
+                }
+
+                let rawWidth = request.preferredWidth > 0 ? Int(request.preferredWidth) : 1920
+                let rawHeight = request.preferredHeight > 0 ? Int(request.preferredHeight) : 1080
+                let width = rawWidth & ~1
+                let height = rawHeight & ~1
+
+                var response = TDHandshakeResponse()
+                response.accepted = true
+                response.serverName = Host.current().localizedName ?? "macOS Host Server"
+                response.allocatedWidth = UInt32(width)
+                response.allocatedHeight = UInt32(height)
+                response.negotiatedFps = 60
+                response.videoStreamPort = 6002
+
+                // Negotiate transport: TCP when a USB device is connected, UDP otherwise
+                if self.usbBridge.isRunning && self.usbBridge.isDeviceConnected && request.clientDeviceName != "Local Loopback Mock Tablet" {
+                    response.videoTransport = .tcp
+                    print("Handshake: Negotiated TCP video transport (USB mode).")
+                } else {
+                    response.videoTransport = .udp
+                    print("Handshake: Negotiated UDP video transport (Wi-Fi mode).")
+                }
+
+                self.startDisplayAndStreamingAsync(
+                    width: width, height: height, fps: 60,
                     usbMode: response.videoTransport == .tcp
-                )
+                ) { success in
+                    if success {
+                        completion(response)
+                    } else {
+                        var failResponse = response
+                        failResponse.accepted = false
+                        completion(failResponse)
+                    }
+                }
             }
-
-            return response
         }
 
         controlServer.onClientDisconnected = { [weak self] in
@@ -226,8 +289,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 if shouldUpdateResolution {
                     let scaleFactor: Double = self.isScaledDown ? 0.75 : 1.0
-                    let targetWidth = Int(Double(self.allocatedWidth) * scaleFactor)
-                    let targetHeight = Int(Double(self.allocatedHeight) * scaleFactor)
+                    let targetWidth = Int(Double(self.allocatedWidth) * scaleFactor) & ~1
+                    let targetHeight = Int(Double(self.allocatedHeight) * scaleFactor) & ~1
                     
                     print("ABR: Applying resolution update: \(targetWidth)x\(targetHeight) (scale=\(scaleFactor))")
                     DispatchQueue.main.async {
@@ -256,8 +319,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Pipeline Lifecycle
 
-    private func startDisplayAndStreaming(width: Int, height: Int, fps: Int, usbMode: Bool) {
-        print("Activating Virtual Display and capture streams (usbMode=\(usbMode))...")
+    private func startDisplayAndStreamingAsync(
+        width: Int, height: Int, fps: Int, usbMode: Bool,
+        completion: @escaping (Bool) -> Void
+    ) {
+        print("Activating Virtual Display and capture streams asynchronously (usbMode=\(usbMode))...")
 
         // Initialize display dimensions and ABR parameters
         self.allocatedWidth = width
@@ -270,13 +336,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard virtualDisplay.create(width: width, height: height, fps: fps) else {
             print("Error: Could not allocate virtual secondary display.")
+            completion(false)
             return
         }
 
         guard let displayID = virtualDisplay.displayID else {
             print("Error: Display created but ID is missing.")
             virtualDisplay.destroy()
+            completion(false)
             return
+        }
+
+        print("[P1] CGVirtualDisplay created | ID: \(displayID)")
+        print("[P1] CGDisplayIsActive:       \(CGDisplayIsActive(displayID))")
+        print("[P1] CGDisplayIsAsleep:       \(CGDisplayIsAsleep(displayID))")
+        print("[P1] CGDisplayIsInMirrorSet:  \(CGDisplayIsInMirrorSet(displayID))")
+        print("[P1] CGDisplayPixelsWide:     \(CGDisplayPixelsWide(displayID))")
+        print("[P1] CGDisplayPixelsHigh:     \(CGDisplayPixelsHigh(displayID))")
+        var cgCount: UInt32 = 0
+        var cgIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        CGGetActiveDisplayList(16, &cgIDs, &cgCount)
+        print("[P1] CGGetActiveDisplayList count: \(cgCount)")
+        for i in 0..<Int(cgCount) {
+            let b = CGDisplayBounds(cgIDs[i])
+            print("[P1]   Display[\(i)] ID=\(cgIDs[i]) bounds={x:\(b.origin.x), y:\(b.origin.y), w:\(b.size.width), h:\(b.size.height)}")
+        }
+        for screen in NSScreen.screens {
+            let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+            print("[P1] NSScreen: '\(screen.localizedName)' id=\(screenID) frame=\(screen.frame)")
         }
 
         if let recordPath = recordFilePath {
@@ -287,35 +374,130 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Start video streaming — TCP or UDP based on negotiated transport
-        if usbMode {
-            serverNetwork.startTCPStreaming(port: 6002)
-        } else {
-            serverNetwork.startStreaming(port: 6002)
+        // Wait dynamically for NSScreen to appear
+        waitForVirtualDisplayScreen(displayID: displayID) { [weak self] virtualScreen in
+            guard let self = self, self.virtualDisplay.displayID == displayID else {
+                completion(false)
+                return
+            }
+
+            guard let screen = virtualScreen else {
+                print("[Step2] ERROR: NSScreen for virtual display \(displayID) not found after timeout.")
+                self.stopDisplayAndStreaming()
+                completion(false)
+                return
+            }
+
+            print("[Step2] NSScreen found for virtual display: \(screen.localizedName) frame=\(screen.frame)")
+
+            let win = NSWindow(
+                contentRect: screen.frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false,
+                screen: screen
+            )
+            win.level = .statusBar
+            win.isOpaque = true
+            win.hasShadow = false
+            win.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            win.setFrame(screen.frame, display: true)
+
+            let tickView = DisplayTickView(frame: screen.frame)
+            win.contentView = tickView
+            tickView.startTicking()
+
+            win.orderFrontRegardless()
+            self.displayProbeWindow = win
+            print("[Step2] Probe window + DisplayTickView created at \(win.frame) on virtual display \(displayID)")
+
+            // Wait 200ms for first display-link repaint cycle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                guard let self = self, self.virtualDisplay.displayID == displayID else {
+                    completion(false)
+                    return
+                }
+
+                print("[Step2] Starting capture 200ms after probe window creation.")
+
+                var firstFrameHandled = false
+                let timeoutTask = DispatchWorkItem { [weak self] in
+                    guard let self = self, !firstFrameHandled else { return }
+                    firstFrameHandled = true
+                    print("[P3] WATCHDOG: First frame timeout after 5.0 seconds.")
+                    self.stopDisplayAndStreaming()
+                    completion(false)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: timeoutTask)
+
+                self.screenCapture.onFirstFrameReceived = { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self = self, !firstFrameHandled else { return }
+                        firstFrameHandled = true
+                        timeoutTask.cancel()
+
+                        print("[P3] WATCHDOG: First frame confirmed received. Completing handshake and starting video stream.")
+
+                        self.videoEncoder.startSession(width: width, height: height, fps: fps)
+
+                        self.videoEncoder.onEncodedFrame = { [weak self] data, isKeyframe in
+                            self?.fileWriter?.write(data: data)
+                            self?.serverNetwork.sendFrame(data: data, isKeyframe: isKeyframe)
+                        }
+
+                        self.screenCapture.onPixelBufferCaptured = { [weak self] pixelBuffer, pts in
+                            self?.videoEncoder.encode(pixelBuffer: pixelBuffer, pts: pts)
+                        }
+
+                        if usbMode {
+                            self.serverNetwork.startTCPStreaming(port: 6002)
+                        } else {
+                            self.serverNetwork.startStreaming(port: 6002)
+                        }
+
+                        self.updateMenuStatus(active: true, statusText: "Status: Connected & Streaming")
+                        completion(true)
+                    }
+                }
+
+                self.screenCapture.startCapture(displayID: displayID, width: width, height: height)
+            }
         }
+    }
 
-        videoEncoder.startSession(width: width, height: height, fps: fps)
-
-        videoEncoder.onEncodedFrame = { [weak self] data, isKeyframe in
-            self?.fileWriter?.write(data: data)
-            self?.serverNetwork.sendFrame(data: data, isKeyframe: isKeyframe)
+    private func waitForVirtualDisplayScreen(displayID: CGDirectDisplayID, retries: Int = 30, completion: @escaping (NSScreen?) -> Void) {
+        if let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID }) {
+            completion(screen)
+            return
         }
-
-        screenCapture.onPixelBufferCaptured = { [weak self] pixelBuffer, pts in
-            self?.videoEncoder.encode(pixelBuffer: pixelBuffer, pts: pts)
+        guard retries > 0 else {
+            completion(nil)
+            return
         }
-
-        screenCapture.startCapture(displayID: displayID, width: width, height: height)
-
-        updateMenuStatus(active: true, statusText: "Status: Connected & Streaming")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.waitForVirtualDisplayScreen(displayID: displayID, retries: retries - 1, completion: completion)
+        }
     }
 
 
     private func stopDisplayAndStreaming() {
         print("Deactivating Virtual Display and streaming pipelines...")
 
+        // ── STEP 2 teardown: close probe window before display is destroyed ──
+        if let win = displayProbeWindow {
+            (win.contentView as? DisplayTickView)?.stopTicking()
+            win.close()
+            displayProbeWindow = nil
+            print("[Step2] Probe window + DisplayTickView closed.")
+        }
+        // ── END STEP 2 teardown ──────────────────────────────────────────────
+
         screenCapture.onPixelBufferCaptured = nil
-        screenCapture.stopCapture()
+        screenCapture.stopCapture { [weak self] in
+            DispatchQueue.main.async {
+                self?.virtualDisplay.destroy()
+            }
+        }
 
         videoEncoder.onEncodedFrame = nil
         videoEncoder.stopSession()
@@ -328,8 +510,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             fileWriter = nil
             print("Local recording file closed.")
         }
-
-        virtualDisplay.destroy()
         updateMenuStatus(active: true, statusText: "Status: Waiting for client...")
     }
 
@@ -393,4 +573,71 @@ fileprivate class FileStreamWriter {
             self.fileHandle = nil
         }
     }
+}
+
+// MARK: - DisplayTickView (Step 2: CVDisplayLink-driven compositor damage source)
+// ─────────────────────────────────────────────────────────────────────────────
+// A borderless fullscreen NSView that drives a CVDisplayLink at 60 Hz.
+// Every 30 display-link ticks (~0.5s) it toggles between two near-identical
+// dark shades. The pixel change is imperceptible but forces WindowServer to
+// emit a damage rectangle, which SCStream picks up as SCFrameStatus.complete.
+//
+// This is an explicit diagnostic instrument. In production it should be
+// replaced with the actual tablet UI renderer (e.g., a Metal layer showing
+// the extended desktop content). It is kept minimal and reversible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+fileprivate class DisplayTickView: NSView {
+    private var displayLink: CVDisplayLink?
+    private var tickCount: Int = 0
+    private var phase: Bool = false
+
+    // Two near-identical dark shades — difference is intentional for damage.
+    private let colorA = NSColor(calibratedWhite: 0.08, alpha: 1.0)
+    private let colorB = NSColor(calibratedWhite: 0.09, alpha: 1.0)
+
+    override var isOpaque: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (phase ? colorB : colorA).setFill()
+        dirtyRect.fill()
+    }
+
+    func startTicking() {
+        guard displayLink == nil else { return }
+
+        let callback: CVDisplayLinkOutputCallback = { _, _, _, _, _, userInfo -> CVReturn in
+            let view = Unmanaged<DisplayTickView>.fromOpaque(userInfo!).takeUnretainedValue()
+            view.tick()
+            return kCVReturnSuccess
+        }
+
+        CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)
+        guard let link = displayLink else { return }
+
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        CVDisplayLinkSetOutputCallback(link, callback, selfPtr)
+        CVDisplayLinkStart(link)
+        print("[Step2] DisplayTickView CVDisplayLink started.")
+    }
+
+    func stopTicking() {
+        guard let link = displayLink else { return }
+        CVDisplayLinkStop(link)
+        displayLink = nil
+        print("[Step2] DisplayTickView CVDisplayLink stopped.")
+    }
+
+    private func tick() {
+        tickCount += 1
+        // Toggle phase every 30 ticks (~0.5s at 60Hz) to produce damage.
+        if tickCount % 30 == 0 {
+            phase.toggle()
+            DispatchQueue.main.async { [weak self] in
+                self?.setNeedsDisplay(NSRect(x: 0, y: 0, width: 1, height: 1))
+            }
+        }
+    }
+
+    deinit { stopTicking() }
 }

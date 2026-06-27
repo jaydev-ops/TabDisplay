@@ -12,6 +12,7 @@ class ServerNetwork {
     private var tcpListener: NWListener?
     private var tcpConnection: NWConnection?
     private let tcpSendQueue = DispatchQueue(label: "com.tabdisplay.tcpsend", qos: .userInteractive)
+    private var tcpFrameCount = 0
 
     // MARK: - Shared state
     private(set) var isUsbMode = false
@@ -34,8 +35,11 @@ class ServerNetwork {
         stopStreaming()
         isUsbMode = false
 
+        let semaphore = DispatchSemaphore(value: 0)
+
         do {
             let parameters = NWParameters.udp
+            parameters.serviceClass = .interactiveVideo
             let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
             let listener = try NWListener(using: parameters, on: listenerPort)
             self.udpListener = listener
@@ -44,8 +48,10 @@ class ServerNetwork {
                 switch state {
                 case .ready:
                     print("ServerNetwork UDP Listener active on port \(port)")
+                    semaphore.signal()
                 case .failed(let error):
                     print("ServerNetwork UDP Listener failed with error: \(error)")
+                    semaphore.signal()
                 default:
                     break
                 }
@@ -57,6 +63,7 @@ class ServerNetwork {
             }
 
             listener.start(queue: DispatchQueue.global(qos: .userInteractive))
+            _ = semaphore.wait(timeout: .now() + 1.0)
         } catch {
             print("Error: Failed to create UDP listener: \(error)")
         }
@@ -67,8 +74,14 @@ class ServerNetwork {
         stopStreaming()
         isUsbMode = true
 
+        let semaphore = DispatchSemaphore(value: 0)
+
         do {
             let parameters = NWParameters.tcp
+            parameters.serviceClass = .interactiveVideo
+            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true
+            }
             let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
             let listener = try NWListener(using: parameters, on: listenerPort)
             self.tcpListener = listener
@@ -77,8 +90,10 @@ class ServerNetwork {
                 switch state {
                 case .ready:
                     print("ServerNetwork TCP Video Listener active on port \(port) (USB mode)")
+                    semaphore.signal()
                 case .failed(let error):
                     print("ServerNetwork TCP Video Listener failed: \(error)")
+                    semaphore.signal()
                 default:
                     break
                 }
@@ -106,6 +121,7 @@ class ServerNetwork {
             }
 
             listener.start(queue: DispatchQueue.global(qos: .userInteractive))
+            _ = semaphore.wait(timeout: .now() + 1.0)
         } catch {
             print("Error: Failed to create TCP video listener: \(error)")
         }
@@ -225,11 +241,20 @@ class ServerNetwork {
 
     private func sendFrameViaTCP(data: Data) {
         guard let connection = tcpConnection else { return }
-        // Length-prefix framing: 4-byte big-endian length + raw H.264 payload
-        var length = UInt32(data.count).bigEndian
+        let timestamp = UInt64(Date().timeIntervalSince1970 * 1000)
+        let payloadSize = 8 + data.count
+        var length = UInt32(payloadSize).bigEndian
         var frameData = Data(bytes: &length, count: 4)
+        var tsBig = timestamp.bigEndian
+        frameData.append(Data(bytes: &tsBig, count: 8))
         frameData.append(data)
         let toSend = frameData
+        
+        tcpFrameCount += 1
+        if tcpFrameCount <= 5 {
+            print("ServerNetwork: Sending TCP frame #\(tcpFrameCount) | payload size: \(payloadSize) bytes")
+        }
+        
         tcpSendQueue.async {
             connection.send(content: toSend, completion: .contentProcessed({ error in
                 if let error = error {

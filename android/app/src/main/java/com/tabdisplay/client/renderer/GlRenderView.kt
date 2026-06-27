@@ -93,26 +93,22 @@ class GlRenderView @JvmOverloads constructor(
         surface = surf
 
         // Setup OpenGL shaders
-        val vertexShaderSource = """
-            attribute vec4 position;
-            attribute vec4 inputTextureCoordinate;
-            varying vec2 textureCoordinate;
-            uniform mat4 textureTransform;
-            void main() {
-                gl_Position = position;
-                textureCoordinate = (textureTransform * inputTextureCoordinate).xy;
-            }
-        """.trimIndent()
+        val vertexShaderSource = "attribute vec4 position;\n" +
+                "attribute vec4 inputTextureCoordinate;\n" +
+                "varying vec2 textureCoordinate;\n" +
+                "uniform mat4 textureTransform;\n" +
+                "void main() {\n" +
+                "    gl_Position = position;\n" +
+                "    textureCoordinate = (textureTransform * inputTextureCoordinate).xy;\n" +
+                "}"
 
-        val fragmentShaderSource = """
-            #extension GL_OES_EGL_image_external : require
-            precision medium float;
-            varying vec2 textureCoordinate;
-            uniform samplerExternalOES videoTexture;
-            void main() {
-                gl_FragColor = texture2D(videoTexture, textureCoordinate);
-            }
-        """.trimIndent()
+        val fragmentShaderSource = "#extension GL_OES_EGL_image_external : require\n" +
+                "precision mediump float;\n" +
+                "varying vec2 textureCoordinate;\n" +
+                "uniform samplerExternalOES videoTexture;\n" +
+                "void main() {\n" +
+                "    gl_FragColor = texture2D(videoTexture, textureCoordinate);\n" +
+                "}"
 
         val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderSource)
         val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderSource)
@@ -121,6 +117,13 @@ class GlRenderView @JvmOverloads constructor(
         GLES20.glAttachShader(program, vertexShader)
         GLES20.glAttachShader(program, fragmentShader)
         GLES20.glLinkProgram(program)
+
+        val linkStatus = IntArray(1)
+        GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] == 0) {
+            val log = GLES20.glGetProgramInfoLog(program)
+            println("GlRenderView Error: OpenGL program linking failed: $log")
+        }
 
         positionHandle = GLES20.glGetAttribLocation(program, "position")
         textureCoordinateHandle = GLES20.glGetAttribLocation(program, "inputTextureCoordinate")
@@ -132,8 +135,66 @@ class GlRenderView @JvmOverloads constructor(
         }
     }
 
+    private var videoWidth = 0
+    private var videoHeight = 0
+    private var viewWidth = 0
+    private var viewHeight = 0
+
+    fun setVideoSize(width: Int, height: Int) {
+        post {
+            videoWidth = width
+            videoHeight = height
+            updateVertexBuffers()
+            requestRender()
+        }
+    }
+
+    private fun updateVertexBuffers() {
+        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {
+            val vertices = floatArrayOf(
+                -1.0f, -1.0f,
+                 1.0f, -1.0f,
+                -1.0f,  1.0f,
+                 1.0f,  1.0f
+            )
+            synchronized(vertexBuffer) {
+                vertexBuffer.clear()
+                vertexBuffer.put(vertices)
+                vertexBuffer.position(0)
+            }
+            return
+        }
+
+        val viewRatio = viewWidth.toFloat() / viewHeight.toFloat()
+        val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
+
+        var xScale = 1.0f
+        var yScale = 1.0f
+
+        if (videoRatio > viewRatio) {
+            yScale = viewRatio / videoRatio
+        } else if (videoRatio < viewRatio) {
+            xScale = videoRatio / viewRatio
+        }
+
+        val vertices = floatArrayOf(
+            -xScale, -yScale,
+             xScale, -yScale,
+            -xScale,  yScale,
+             xScale,  yScale
+        )
+        synchronized(vertexBuffer) {
+            vertexBuffer.clear()
+            vertexBuffer.put(vertices)
+            vertexBuffer.position(0)
+        }
+    }
+
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
+        viewWidth = width
+        viewHeight = height
+        updateVertexBuffers()
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -171,6 +232,13 @@ class GlRenderView @JvmOverloads constructor(
         val shader = GLES20.glCreateShader(type)
         GLES20.glShaderSource(shader, shaderCode)
         GLES20.glCompileShader(shader)
+        
+        val compileStatus = IntArray(1)
+        GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compileStatus, 0)
+        if (compileStatus[0] == 0) {
+            val log = GLES20.glGetShaderInfoLog(shader)
+            println("GlRenderView Error: OpenGL shader compilation failed (type=$type): $log")
+        }
         return shader
     }
 

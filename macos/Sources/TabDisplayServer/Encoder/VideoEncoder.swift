@@ -4,6 +4,7 @@ import CoreMedia
 
 class VideoEncoder {
     private var session: VTCompressionSession?
+    private var encodedFrameCount = 0
     
     // Callback invoked when a complete H.264 Annex B frame is produced
     var onEncodedFrame: ((Data, Bool) -> Void)?
@@ -86,8 +87,8 @@ class VideoEncoder {
         // 1. Enable real-time compression
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         
-        // 2. Profile Level: H.264 Baseline AutoLevel to avoid B-frames
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Baseline_AutoLevel)
+        // 2. Profile Level: H.264 Main AutoLevel for better compression and quality with CABAC
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Main_AutoLevel)
         
         // 3. Disable frame reordering (strictly no B-frames for zero latency)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
@@ -108,6 +109,12 @@ class VideoEncoder {
         
         // 8. Enable temporal compression
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowTemporalCompression, value: kCFBooleanTrue)
+        
+        // 9. Prioritize encoding speed over quality for low latency
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
+        
+        // 10. Enable CABAC entropy coding for 10-15% better compression efficiency over CAVLC
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_H264EntropyMode, value: kVTH264EntropyMode_CABAC as CFTypeRef)
     }
     
     /// Adjusts encoder average and limit bitrates on the fly
@@ -119,8 +126,8 @@ class VideoEncoder {
             print("Warning: Could not set average bitrate to \(bitrate): \(status)")
         }
         
-        // Limit peak rate to average bitrate * 1.5 over 1 second window to prevent massive network spikes
-        let limitBytes = Double(bitrate) * 1.5 / 8.0
+        // Limit peak rate to average bitrate * 1.2 over 1 second window to prevent massive network spikes
+        let limitBytes = Double(bitrate) * 1.2 / 8.0
         let dataLimits: [Any] = [limitBytes, 1.0]
         let limitStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: dataLimits as CFArray)
         if limitStatus != noErr {
@@ -275,6 +282,10 @@ class VideoEncoder {
         }
         
         if !packetData.isEmpty {
+            encodedFrameCount += 1
+            if encodedFrameCount <= 5 {
+                print("VideoEncoder: Encoded H.264 frame #\(encodedFrameCount) | size: \(packetData.count) bytes | keyframe: \(isKeyframe)")
+            }
             onEncodedFrame?(packetData, isKeyframe)
         }
     }

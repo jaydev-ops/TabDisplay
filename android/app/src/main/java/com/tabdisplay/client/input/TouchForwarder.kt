@@ -7,17 +7,51 @@ import com.tabdisplay.client.proto.ControlPacket
 import com.tabdisplay.client.proto.InputEvent
 
 class TouchForwarder(private val controlClient: ControlClient) : View.OnTouchListener {
-
+    
     private var isScrolling = false
     private var prevScrollX = 0f
     private var prevScrollY = 0f
+    private var videoWidth = 0
+    private var videoHeight = 0
+
+    fun setVideoSize(width: Int, height: Int) {
+        this.videoWidth = width
+        this.videoHeight = height
+    }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
-        val width = if (v.width > 0) v.width else 1
-        val height = if (v.height > 0) v.height else 1
+        val viewWidth = if (v.width > 0) v.width.toFloat() else 1f
+        val viewHeight = if (v.height > 0) v.height.toFloat() else 1f
         
-        val xPercent = (event.x / width).coerceIn(0.0f, 1.0f)
-        val yPercent = (event.y / height).coerceIn(0.0f, 1.0f)
+        var xPercent = 0.5f
+        var yPercent = 0.5f
+
+        if (videoWidth > 0 && videoHeight > 0) {
+            val viewRatio = viewWidth / viewHeight
+            val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
+
+            var displayedWidth = viewWidth
+            var displayedHeight = viewHeight
+            var offsetX = 0f
+            var offsetY = 0f
+
+            if (videoRatio > viewRatio) {
+                // Video fits to width, letterboxed vertically
+                displayedHeight = viewWidth / videoRatio
+                offsetY = (viewHeight - displayedHeight) / 2f
+            } else if (videoRatio < viewRatio) {
+                // Video fits to height, pillarboxed horizontally
+                displayedWidth = viewHeight * videoRatio
+                offsetX = (viewWidth - displayedWidth) / 2f
+            }
+
+            xPercent = ((event.x - offsetX) / displayedWidth).coerceIn(0.0f, 1.0f)
+            yPercent = ((event.y - offsetY) / displayedHeight).coerceIn(0.0f, 1.0f)
+        } else {
+            xPercent = (event.x / viewWidth).coerceIn(0.0f, 1.0f)
+            yPercent = (event.y / viewHeight).coerceIn(0.0f, 1.0f)
+        }
+
         val pointerCount = event.pointerCount
         val actionMasked = event.actionMasked
 

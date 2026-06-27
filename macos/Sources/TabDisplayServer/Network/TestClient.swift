@@ -186,8 +186,8 @@ private func receiveUDPVideoPackets(_ connection: NWConnection) {
                 print("TestClient: Recv Video Packet | Frame #\(frameIndex) | Frag \(fragmentIndex)/\(totalFragments) | Type: \(frameTypeStr) | Payload: \(payloadSize) bytes | Latency: \(Date().timeIntervalSince1970 * 1000 - Double(timestamp))ms")
             }
             
-            // Inject NACK test around frame 10 (on a multi-fragment frame if possible)
-            if !nackSent && frameIndex >= 10 && totalFragments > 1 && fragmentIndex == 1 {
+            // Inject NACK test around frame 10
+            if !nackSent && frameIndex >= 10 && fragmentIndex == 0 {
                 nackSent = true
                 targetNackFrameIndex = frameIndex
                 targetNackFragmentIndex = fragmentIndex

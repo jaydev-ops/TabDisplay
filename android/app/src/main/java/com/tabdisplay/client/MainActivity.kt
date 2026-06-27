@@ -129,7 +129,13 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
         btnConnect.isEnabled = false
         ipInput.isEnabled = false
         usbModeSwitch.isEnabled = false
-        controlClient?.connect(ip, 5001)
+
+        // Get native display resolution in pixels
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+
+        controlClient?.connect(ip, 5001, width, height)
     }
 
     // ── ControlClient.Listener ────────────────────────────────────────────────
@@ -148,11 +154,13 @@ class MainActivity : AppCompatActivity(), ControlClient.Listener, GlRenderView.S
 
             connectionOverlay.visibility = View.GONE
 
+            glRenderView.setVideoSize(allocatedWidth, allocatedHeight)
             glRenderView.setSurfaceListener(this)
 
             val client = controlClient
             if (client != null) {
                 val forwarder = TouchForwarder(client)
+                forwarder.setVideoSize(allocatedWidth, allocatedHeight)
                 touchForwarder = forwarder
                 glRenderView.setOnTouchListener(forwarder)
             }

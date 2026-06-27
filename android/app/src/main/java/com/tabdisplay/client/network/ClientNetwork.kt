@@ -24,6 +24,7 @@ class ClientNetwork(private val decoder: HardwareDecoder) {
     private var tcpSocket: Socket? = null
     private var tcpReceiveThread: Thread? = null
     private var isUsbMode = false
+    private var tcpFrameCount = 0
 
     // ── Frame assembly (shared) ───────────────────────────────────────────────
     private val activeFrames = ConcurrentHashMap<Int, FrameAssembly>()
@@ -171,46 +172,93 @@ class ClientNetwork(private val decoder: HardwareDecoder) {
     private fun startTcpReceiver(serverIp: String, port: Int) {
         tcpReceiveThread = thread(name = "ClientNetwork-TCPReceiver") {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
-            try {
-                val sock = Socket(serverIp, port)
-                tcpSocket = sock
-                println("ClientNetwork: TCP video socket connected to $serverIp:$port (USB mode)")
+            
+            var attempt = 0
+            val maxAttempts = 5
+            var sock: Socket? = null
 
-                val stream: InputStream = sock.getInputStream()
-                val lengthBuf = ByteArray(4)
-
-                while (isListening) {
-                    // Read 4-byte big-endian length prefix
-                    if (!readFully(stream, lengthBuf, 4)) break
-                    val frameLength = ByteBuffer.wrap(lengthBuf).order(ByteOrder.BIG_ENDIAN).int
-
-                    if (frameLength <= 0 || frameLength > 4_000_000) {
-                        println("ClientNetwork: Invalid TCP frame length $frameLength, skipping.")
-                        continue
+            while (isListening && attempt < maxAttempts) {
+                try {
+                    attempt++
+                    println("ClientNetwork: TCP video socket connecting to $serverIp:$port (attempt $attempt/$maxAttempts)...")
+                    sock = Socket(serverIp, port)
+                    sock.tcpNoDelay = true // Disable Nagle's algorithm for video stream low-latency
+                    tcpSocket = sock
+                    println("ClientNetwork: TCP video socket connected successfully.")
+                    break
+                } catch (e: Exception) {
+                    println("ClientNetwork: Connection attempt $attempt failed: ${e.message}")
+                    if (attempt >= maxAttempts || !isListening) {
+                        break
                     }
-
-                    // Read raw H.264 frame payload
-                    val frameData = ByteArray(frameLength)
-                    if (!readFully(stream, frameData, frameLength)) break
-
-                    val now = System.currentTimeMillis()
-                    updateJitter(now)
-
-                    // Deliver directly to decoder (TCP is reliable — no reassembly needed)
-                    decoder.decodeBuffer(frameData, now)
-                    currentLatencyMs = 0f // TCP has no timestamp header; latency tracked by Phase 8 profiling
-                    totalPacketsReceived++
-                    totalPacketsExpected++
+                    try {
+                        Thread.sleep(200)
+                    } catch (ie: InterruptedException) {
+                        break
+                    }
                 }
+            }
 
-            } catch (e: Exception) {
-                if (isListening) println("ClientNetwork: TCP receiver error: ${e.message}")
-            } finally {
-                tcpSocket?.close()
-                tcpSocket = null
+            if (sock != null && isListening) {
+                try {
+                    val stream: InputStream = sock.getInputStream()
+                    val lengthBuf = ByteArray(4)
+
+                    while (isListening) {
+                        // Read 4-byte big-endian length prefix
+                        if (!readFully(stream, lengthBuf, 4)) {
+                            println("ClientNetwork: EOF or read error on TCP video stream.")
+                            break
+                        }
+                        val frameLength = ByteBuffer.wrap(lengthBuf).order(ByteOrder.BIG_ENDIAN).int
+
+                        if (frameLength <= 0 || frameLength > 4_000_000) {
+                            println("ClientNetwork: Invalid TCP frame length $frameLength, skipping.")
+                            continue
+                        }
+
+                        // Read raw H.264 frame payload (includes 8-byte timestamp + H.264 video payload)
+                        val frameData = ByteArray(frameLength)
+                        if (!readFully(stream, frameData, frameLength)) {
+                            println("ClientNetwork: EOF or read error reading frame payload.")
+                            break
+                        }
+
+                        if (frameLength >= 8) {
+                            val timestampBuffer = ByteBuffer.wrap(frameData, 0, 8).order(ByteOrder.BIG_ENDIAN)
+                            val timestamp = timestampBuffer.long
+
+                            val h264Length = frameLength - 8
+                            val h264Payload = ByteArray(h264Length)
+                            System.arraycopy(frameData, 8, h264Payload, 0, h264Length)
+
+                            val now = System.currentTimeMillis()
+                            updateJitter(now)
+                            
+                            tcpFrameCount++
+                            if (tcpFrameCount <= 5) {
+                                println("ClientNetwork: Received TCP frame #$tcpFrameCount | h264 size: $h264Length bytes | latency: ${now - timestamp}ms")
+                            }
+
+                            // Deliver directly to decoder
+                            decoder.decodeBuffer(h264Payload, now)
+                            currentLatencyMs = Math.max(0f, (now - timestamp).toFloat())
+                        }
+                        totalPacketsReceived++
+                        totalPacketsExpected++
+                    }
+                } catch (e: Exception) {
+                    if (isListening) println("ClientNetwork: TCP receiver loop error: ${e.message}")
+                } finally {
+                    try {
+                        sock.close()
+                    } catch (e: Exception) {}
+                    tcpSocket = null
+                }
             }
         }
     }
+
 
     /** Reads exactly [count] bytes from [stream] into [buf]. Returns false on EOF/error. */
     private fun readFully(stream: InputStream, buf: ByteArray, count: Int): Boolean {

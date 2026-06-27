@@ -7,7 +7,7 @@ class ControlServer {
     private var activeConnection: NWConnection?
     
     // Callbacks to communicate with AppDelegate
-    var onHandshakeRequest: ((TDHandshakeRequest) -> TDHandshakeResponse)?
+    var onHandshakeRequest: ((TDHandshakeRequest, @escaping (TDHandshakeResponse) -> Void) -> Void)?
     var onInputEvent: ((TDInputEvent) -> Void)?
     var onTelemetryFeedback: ((TDTelemetryFeedback) -> Void)?
     var onClientDisconnected: (() -> Void)?
@@ -25,6 +25,10 @@ class ControlServer {
         
         do {
             let parameters = NWParameters.tcp
+            parameters.serviceClass = .responsiveData
+            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true
+            }
             let listenerPort = NWEndpoint.Port(rawValue: UInt16(port))!
             let listener = try NWListener(using: parameters, on: listenerPort)
             self.listener = listener
@@ -64,10 +68,9 @@ class ControlServer {
     }
     
     private func handleNewConnection(_ connection: NWConnection) {
-        if activeConnection != nil {
-            print("Warning: Refusing incoming connection from \(connection.endpoint) - a client is already connected.")
-            connection.cancel()
-            return
+        if let oldConnection = activeConnection {
+            print("Warning: New connection received while a client is already connected. Closing old connection.")
+            closeConnection(oldConnection)
         }
         
         print("Accepted new TCP client connection from: \(connection.endpoint)")
@@ -142,10 +145,12 @@ class ControlServer {
             switch packet.payload {
             case .handshakeRequest(let request):
                 print("Received Handshake Request from client device: '\(request.clientDeviceName)'")
-                if let response = onHandshakeRequest?(request) {
-                    var responsePacket = TDControlPacket()
-                    responsePacket.handshakeResponse = response
-                    sendPacket(responsePacket)
+                if let handler = onHandshakeRequest {
+                    handler(request) { [weak self] response in
+                        var responsePacket = TDControlPacket()
+                        responsePacket.handshakeResponse = response
+                        self?.sendPacket(responsePacket)
+                    }
                 }
             case .keepAlive(let keepAlive):
                 // Echo KeepAlive heartbeat straight back

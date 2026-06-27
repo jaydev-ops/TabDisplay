@@ -18,4 +18,6 @@ capture.h264
 # Release build outputs
 release/
 
-
+# Compiled scripts binaries
+scripts/test_display_list
+scripts/test_sck_detection

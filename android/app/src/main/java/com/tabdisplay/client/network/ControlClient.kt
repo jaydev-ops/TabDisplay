@@ -22,12 +22,13 @@ class ControlClient(private val listener: Listener) {
     private var isRunning = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    fun connect(host: String, port: Int) {
+    fun connect(host: String, port: Int, preferredWidth: Int, preferredHeight: Int) {
         disconnect()
         isRunning = true
         thread(name = "ControlClient-Thread") {
             try {
                 val sock = Socket(host, port)
+                sock.tcpNoDelay = true // Disable Nagle's algorithm for low-latency
                 socket = sock
                 outStream = DataOutputStream(sock.getOutputStream())
                 inStream = DataInputStream(sock.getInputStream())
@@ -35,7 +36,7 @@ class ControlClient(private val listener: Listener) {
                 println("ControlClient: Connected to $host:$port")
 
                 // Send Handshake Request immediately
-                sendHandshakeRequest()
+                sendHandshakeRequest(preferredWidth, preferredHeight)
 
                 // Start receive loop
                 receiveLoop()
@@ -48,11 +49,11 @@ class ControlClient(private val listener: Listener) {
         }
     }
 
-    private fun sendHandshakeRequest() {
+    private fun sendHandshakeRequest(preferredWidth: Int, preferredHeight: Int) {
         val request = HandshakeRequest.newBuilder()
             .setClientDeviceName(android.os.Build.MODEL)
-            .setPreferredWidth(1920)
-            .setPreferredHeight(1080)
+            .setPreferredWidth(preferredWidth)
+            .setPreferredHeight(preferredHeight)
             .setTargetFps(60)
             .build()
 
