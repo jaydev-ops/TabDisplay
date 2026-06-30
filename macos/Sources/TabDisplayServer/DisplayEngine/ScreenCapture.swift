@@ -57,13 +57,18 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func startCapture(displayID: CGDirectDisplayID, width: Int, height: Int) {
         firstFrameReceived = false
-        print("Initiating ScreenCaptureKit content query for Display ID: \(displayID)...")
+        let tStart = Int64(Date().timeIntervalSince1970 * 1000)
+        print("[\(tStart) ms] [SCK] startCapture initiated for Display ID: \(displayID)")
         
         Task { [weak self] in
             guard let self = self else { return }
 
             do {
+                let tQueryStart = Int64(Date().timeIntervalSince1970 * 1000)
+                print("[\(tQueryStart) ms] [SCK] Querying SCShareableContent...")
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                let tQueryEnd = Int64(Date().timeIntervalSince1970 * 1000)
+                print("[\(tQueryEnd) ms] [SCK] SCShareableContent returned (took \(tQueryEnd - tQueryStart) ms)")
 
                 // ── PHASE 2 DIAGNOSTIC ───────────────────────────────────────────
                 // Observe: Whether SCShareableContent independently sees the virtual display.
@@ -93,7 +98,10 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 // by first_frame.png showing Safari/primary display content).
                 // The excludingApplications:exceptingWindows: initializer correctly scopes
                 // the filter to this specific display's composited output.
+                let tFilterStart = Int64(Date().timeIntervalSince1970 * 1000)
                 let filter = SCContentFilter(display: targetDisplay, excludingWindows: [])
+                let tFilterEnd = Int64(Date().timeIntervalSince1970 * 1000)
+                print("[\(tFilterEnd) ms] [SCK] SCContentFilter created (took \(tFilterEnd - tFilterStart) ms)")
                 // ── END STEP 1 FIX ───────────────────────────────────────────────────────
 
 
@@ -109,12 +117,19 @@ class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 config.scalesToFit = false
                 config.capturesAudio = false
 
+                let tStreamStart = Int64(Date().timeIntervalSince1970 * 1000)
                 let stream = SCStream(filter: filter, configuration: config, delegate: self)
                 self.stream = stream
+                let tStreamEnd = Int64(Date().timeIntervalSince1970 * 1000)
+                print("[\(tStreamEnd) ms] [SCK] SCStream created (took \(tStreamEnd - tStreamStart) ms)")
 
                 try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.captureQueue)
 
+                let tCaptureStart = Int64(Date().timeIntervalSince1970 * 1000)
                 try await stream.startCapture()
+                let tCaptureEnd = Int64(Date().timeIntervalSince1970 * 1000)
+                print("[\(tCaptureEnd) ms] [SCK] stream.startCapture completed (took \(tCaptureEnd - tCaptureStart) ms)")
+                
                 self.frameCount = 0
                 self.firstFrameReceived = false
                 self.firstFrameSaved = false

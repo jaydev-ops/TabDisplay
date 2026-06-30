@@ -50,24 +50,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Priority 1 & 2: Check screen capture permissions on launch
         let hasAccess = CGPreflightScreenCaptureAccess()
-        print("Screen Recording Permission Status on Launch: \(hasAccess ? "GRANTED" : "NOT GRANTED")")
+        let t0 = Int64(Date().timeIntervalSince1970 * 1000)
+        print("[\(t0) ms] [Permission] Status on Launch: \(hasAccess ? "GRANTED" : "NOT GRANTED")")
         
         if hasAccess {
             // Start TCP control listener immediately if permission is already granted
             controlServer.startListener(port: 5001)
             updateMenuStatus(active: true, statusText: "Status: Waiting for client...")
         } else {
-            print("[Permission] Requesting screen recording permission from user...")
+            let t1 = Int64(Date().timeIntervalSince1970 * 1000)
+            print("[\(t1) ms] [Permission] Requesting screen recording permission from user...")
             // Trigger system prompt (non-blocking)
-            _ = CGRequestScreenCaptureAccess()
+            let reqResult = CGRequestScreenCaptureAccess()
+            let t2 = Int64(Date().timeIntervalSince1970 * 1000)
+            print("[\(t2) ms] [Permission] CGRequestScreenCaptureAccess returned \(reqResult)")
             updateMenuStatus(active: false, statusText: "Status: Permission Required")
             
             // Start polling timer to detect when permission is granted
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
                 guard let self = self else { return }
-                print("[Permission] Checking screen recording access status...")
-                if CGPreflightScreenCaptureAccess() {
-                    print("[Permission] Access granted! Initializing control listener.")
+                let tp = Int64(Date().timeIntervalSince1970 * 1000)
+                let pollAccess = CGPreflightScreenCaptureAccess()
+                print("[\(tp) ms] [Permission] Polling check: \(pollAccess ? "GRANTED" : "NOT GRANTED")")
+                if pollAccess {
+                    print("[\(Int64(Date().timeIntervalSince1970 * 1000)) ms] [Permission] Access granted! Initializing control listener.")
                     timer.invalidate()
                     self.permissionTimer = nil
                     self.controlServer.startListener(port: 5001)

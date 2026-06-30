@@ -3,7 +3,10 @@ import Foundation
 import Security
 
 func logCodeSigningDiagnostics() {
-    print("=== TABDISPLAY DIAGNOSTICS ===")
+    let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+    print("=== TABDISPLAY DIAGNOSTICS [\(nowMs) ms] ===")
+    print("Process ID (PID):  \(getpid())")
+    print("Parent PID (PPID): \(getppid())")
     
     let bundleID = Bundle.main.bundleIdentifier ?? "N/A (No Bundle ID)"
     let executablePath = Bundle.main.executablePath ?? CommandLine.arguments.first ?? "Unknown"
@@ -67,6 +70,12 @@ logCodeSigningDiagnostics()
 if CommandLine.arguments.contains("--test-client") {
     runTestClient()
 } else {
+    if Bundle.main.bundleIdentifier == nil {
+        print("[WARNING] TabDisplay is running as a raw command-line binary (no Bundle ID).")
+        print("[WARNING] macOS TCC Screen Recording permissions will NOT persist across recompiles.")
+        print("[WARNING] Please compile and run using: ./scripts/build_debug_app.sh && open -a ./macos/.build/debug/TabDisplay.app")
+        print("---------------------------------------------------------------------------\n")
+    }
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
